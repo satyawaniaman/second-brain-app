@@ -14,87 +14,221 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-const db_1 = require("./db");
-const config_1 = require("./config");
-const middleware_1 = require("./middleware");
+const bcrypt_1 = __importDefault(require("bcrypt"));
+const zod_1 = require("zod");
+const client_1 = require("@prisma/client");
+const middleware_1 = require("./middleware/middleware");
+const cors_1 = __importDefault(require("cors"));
+const config_1 = require("./config/config");
+const utils_1 = require("./utils");
+const client = new client_1.PrismaClient();
 const app = (0, express_1.default)();
 app.use(express_1.default.json());
+app.use((0, cors_1.default)());
 app.post("/api/v1/signup", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    // TODO: zod validation , hash the password
+    const userSchema = zod_1.z.object({
+        username: zod_1.z.string().email(),
+        password: zod_1.z.string().min(3).max(20),
+    });
     const username = req.body.username;
     const password = req.body.password;
+    const hashedPassword = yield bcrypt_1.default.hash(password, 15);
     try {
-        yield db_1.UserModel.create({
-            username: username,
-            password: password,
+        yield client.user.create({
+            data: {
+                username,
+                password: hashedPassword,
+            },
         });
         res.json({
-            message: "User signed up",
+            message: "user signed up",
         });
     }
     catch (e) {
         res.status(411).json({
-            message: "User already exists",
+            message: "User already registered",
         });
     }
 }));
+//@ts-ignore
 app.post("/api/v1/signin", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const username = req.body.username;
     const password = req.body.password;
-    const existingUser = yield db_1.UserModel.findOne({
-        username,
-        password,
+    const user = yield client.user.findFirst({
+        where: { username },
     });
-    if (existingUser) {
-        const token = jsonwebtoken_1.default.sign({
-            id: existingUser._id,
-        }, config_1.JWT_PASSWORD);
-        res.json({
-            token,
+    if (!user) {
+        return res.status(401).json({
+            message: "Invalid username or password",
         });
     }
-    else {
-        res.status(403).json({
-            message: "Incorrrect credentials",
+    const passwordMatch = yield bcrypt_1.default.compare(password, user.password);
+    if (!passwordMatch) {
+        return res.status(401).json({
+            message: "Invalid username or password",
         });
     }
+    const token = jsonwebtoken_1.default.sign({ userId: user.id }, config_1.JWT_PASSWORD);
+    res.json({
+        token: token,
+    });
 }));
-app.post("/api/v1/content", middleware_1.userMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+//@ts-ignore
+app.post("/api/v1/contents", middleware_1.userMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const link = req.body.link;
     const type = req.body.type;
-    yield db_1.ContentModel.create({
-        link,
-        type,
-        title: req.body.title,
-        //@ts-ignore
-        userId: req.userId,
-        tags: [],
+    const title = req.body.title;
+    yield client.content.create({
+        data: {
+            link,
+            type,
+            title,
+            //@ts-ignore
+            userId: req.userId,
+            // Either omit tags field completely if not using tags
+            // or specify it properly like this:
+            tags: {
+                create: [], // for creating new tags
+                // or
+                // connect: [] // for connecting existing tags
+            },
+        },
     });
     res.json({
         message: "Content added",
     });
 }));
-app.get("/api/v1/content", middleware_1.userMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    // @ts-ignore
-    const userId = req.userId;
-    const content = yield db_1.ContentModel.find({
-        userId: userId,
-    }).populate("userId", "username");
+//@ts-ignore
+app.get("/api/v1/contents", middleware_1.userMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        //@ts-ignore
+        const userId = req.userId;
+        const contents = yield client.content.findMany({
+            where: {
+                userId: userId,
+            },
+            include: {
+                user: {
+                    select: {
+                        username: true,
+                    },
+                },
+            },
+        });
+        res.json({
+            contents,
+        });
+    }
+    catch (e) {
+        res.status(500).json({
+            message: "Error fetching contents",
+        });
+    }
+}));
+//@ts-ignore
+app.delete("/api/v1/contents", middleware_1.userMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const contentId = req.body.contentId;
+        //@ts-ignore
+        yield client.content.deleteMany({
+            where: {
+                id: contentId,
+                //@ts-ignore
+                userId: req.userId,
+            },
+        });
+        res.json({
+            message: "Content deleted successfully",
+        });
+    }
+    catch (e) {
+        res.status(500).json({
+            message: "Error deleting content",
+        });
+    }
+}));
+//@ts-ignore
+app.post("/api/v1/share", middleware_1.userMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const share = req.body.share;
+    try {
+        if (share) {
+            const existingLink = yield client.link.findFirst({
+                where: {
+                    //@ts-ignore
+                    userId: req.userId,
+                },
+            });
+            if (existingLink) {
+                res.json({
+                    hash: existingLink.hash,
+                });
+                return;
+            }
+            yield client.link.create({
+                data: {
+                    //@ts-ignore
+                    userId: req.userId,
+                    hash: (0, utils_1.random)(10),
+                },
+            });
+        }
+        else {
+            yield client.link.delete({
+                //@ts-ignore
+                where: {
+                    //@ts-ignore
+                    userId: req.userId,
+                },
+            });
+        }
+        res.json({
+            message: "Updated sharable link",
+        });
+    }
+    catch (e) {
+        res.status(411).json({
+            message: "error accessing it",
+        });
+    }
+}));
+//@ts-ignore
+app.get("/api/v1/:shareLink", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const hash = req.params.shareLink;
+    const link = yield client.link.findFirst({
+        where: {
+            hash,
+        },
+    });
+    if (!link) {
+        res.status(411).json({
+            message: "wrong link",
+        });
+        return;
+    }
+    const content = yield client.content.findFirst({
+        where: {
+            userId: link.userId,
+        },
+    });
+    const user = yield client.user.findFirst({
+        where: {
+            id: link.userId,
+        },
+    });
+    if (!user) {
+        res.status(411).json({
+            message: "user not found",
+        });
+        return;
+    }
     res.json({
-        content,
+        username: user.username,
+        content: content,
     });
 }));
-app.delete("/api/v1/content", middleware_1.userMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const contentId = req.body.contentId;
-    yield db_1.ContentModel.deleteMany({
-        contentId,
-        // @ts-ignore
-        userId: req.userId,
-    });
-    res.json({
-        message: "Deleted",
-    });
-}));
-app.post("/api/v1/brain/share", (req, res) => { });
-app.get("/api/v1/brain/:shareLink", (req, res) => { });
-app.listen(3000);
+const server = app.listen(3000, () => {
+    console.log("Server listening on port 3000");
+});
+server.on("error", (err) => {
+    console.error("Error starting server:", err);
+});

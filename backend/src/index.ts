@@ -1,104 +1,219 @@
 import express from "express";
-import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
-import { ContentModel, UserModel } from "./db";
-import { JWT_PASSWORD } from "./config";
-import { userMiddleware } from "./middleware";
-
+import bcrypt from "bcrypt";
+import { z } from "zod";
+import { PrismaClient } from "@prisma/client";
+import { userMiddleware } from "./middleware/middleware";
+import cors from "cors";
+import { JWT_PASSWORD } from "./config/config";
+import { random } from "./utils";
+const client = new PrismaClient();
 const app = express();
 app.use(express.json());
+app.use(cors());
 
 app.post("/api/v1/signup", async (req, res) => {
-  // TODO: zod validation , hash the password
+  const userSchema = z.object({
+    username: z.string().email(),
+    password: z.string().min(3).max(20),
+  });
   const username = req.body.username;
   const password = req.body.password;
-
+  const hashedPassword = await bcrypt.hash(password, 15);
   try {
-    await UserModel.create({
-      username: username,
-      password: password,
+    await client.user.create({
+      data: {
+        username,
+        password: hashedPassword,
+      },
     });
-
     res.json({
-      message: "User signed up",
+      message: "user signed up",
     });
   } catch (e) {
     res.status(411).json({
-      message: "User already exists",
+      message: "User already registered",
     });
   }
 });
-
+//@ts-ignore
 app.post("/api/v1/signin", async (req, res) => {
   const username = req.body.username;
   const password = req.body.password;
-
-  const existingUser = await UserModel.findOne({
-    username,
-    password,
+  const user = await client.user.findFirst({
+    where: { username },
   });
-  if (existingUser) {
-    const token = jwt.sign(
-      {
-        id: existingUser._id,
-      },
-      JWT_PASSWORD
-    );
-
-    res.json({
-      token,
-    });
-  } else {
-    res.status(403).json({
-      message: "Incorrrect credentials",
+  if (!user) {
+    return res.status(401).json({
+      message: "Invalid username or password",
     });
   }
+  const passwordMatch = await bcrypt.compare(password, user.password);
+  if (!passwordMatch) {
+    return res.status(401).json({
+      message: "Invalid username or password",
+    });
+  }
+  const token = jwt.sign({ userId: user.id }, JWT_PASSWORD);
+  res.json({
+    token: token,
+  });
 });
-
-app.post("/api/v1/content", userMiddleware, async (req, res) => {
+//@ts-ignore
+app.post("/api/v1/contents", userMiddleware, async (req, res) => {
   const link = req.body.link;
   const type = req.body.type;
-  await ContentModel.create({
-    link,
-    type,
-    title: req.body.title,
-    //@ts-ignore
-    userId: req.userId,
-    tags: [],
+  const title = req.body.title;
+  await client.content.create({
+    data: {
+      link,
+      type,
+      title,
+      //@ts-ignore
+      userId: req.userId,
+      // Either omit tags field completely if not using tags
+      // or specify it properly like this:
+      tags: {
+        create: [], // for creating new tags
+        // or
+        // connect: [] // for connecting existing tags
+      },
+    },
   });
-
   res.json({
     message: "Content added",
   });
 });
+//@ts-ignore
+app.get("/api/v1/contents", userMiddleware, async (req, res) => {
+  try {
+    //@ts-ignore
+    const userId = req.userId;
+    const contents = await client.content.findMany({
+      where: {
+        userId: userId,
+      },
+      include: {
+        user: {
+          select: {
+            username: true,
+          },
+        },
+      },
+    });
+    res.json({
+      contents,
+    });
+  } catch (e) {
+    res.status(500).json({
+      message: "Error fetching contents",
+    });
+  }
+});
+//@ts-ignore
+app.delete("/api/v1/contents", userMiddleware, async (req, res) => {
+  try {
+    const contentId = req.body.contentId;
+    //@ts-ignore
+    await client.content.deleteMany({
+      where: {
+        id: contentId,
+        //@ts-ignore
+        userId: req.userId,
+      },
+    });
+    res.json({
+      message: "Content deleted successfully",
+    });
+  } catch (e) {
+    res.status(500).json({
+      message: "Error deleting content",
+    });
+  }
+});
+//@ts-ignore
+app.post("/api/v1/share", userMiddleware, async (req, res) => {
+  const share = req.body.share;
+  try {
+    if (share) {
+      const existingLink = await client.link.findFirst({
+        where: {
+          //@ts-ignore
+          userId: req.userId,
+        },
+      });
 
-app.get("/api/v1/content", userMiddleware, async (req, res) => {
-  // @ts-ignore
-  const userId = req.userId;
-  const content = await ContentModel.find({
-    userId: userId,
-  }).populate("userId", "username");
+      if (existingLink) {
+        res.json({
+          hash: existingLink.hash,
+        });
+        return;
+      }
+      await client.link.create({
+        data: {
+          //@ts-ignore
+          userId: req.userId,
+          hash: random(10),
+        },
+      });
+    } else {
+      await client.link.delete({
+        //@ts-ignore
+        where: {
+          //@ts-ignore
+          userId: req.userId,
+        },
+      });
+    }
+    res.json({
+      message: "Updated sharable link",
+    });
+  } catch (e) {
+    res.status(411).json({
+      message: "error accessing it",
+    });
+  }
+});
+//@ts-ignore
+app.get("/api/v1/:shareLink", async (req, res) => {
+  const hash = req.params.shareLink;
+  const link = await client.link.findFirst({
+    where: {
+      hash,
+    },
+  });
+  if (!link) {
+    res.status(411).json({
+      message: "wrong link",
+    });
+    return;
+  }
+  const content = await client.content.findFirst({
+    where: {
+      userId: link.userId,
+    },
+  });
+  const user = await client.user.findFirst({
+    where: {
+      id: link.userId,
+    },
+  });
+  if (!user) {
+    res.status(411).json({
+      message: "user not found",
+    });
+    return;
+  }
   res.json({
-    content,
+    username: user.username,
+    content: content,
   });
 });
 
-app.delete("/api/v1/content", userMiddleware, async (req, res) => {
-  const contentId = req.body.contentId;
-
-  await ContentModel.deleteMany({
-    contentId,
-    // @ts-ignore
-    userId: req.userId,
-  });
-
-  res.json({
-    message: "Deleted",
-  });
+const server = app.listen(3000, () => {
+  console.log("Server listening on port 3000");
 });
 
-app.post("/api/v1/brain/share", (req, res) => {});
-
-app.get("/api/v1/brain/:shareLink", (req, res) => {});
-
-app.listen(3000);
+server.on("error", (err) => {
+  console.error("Error starting server:", err);
+});
