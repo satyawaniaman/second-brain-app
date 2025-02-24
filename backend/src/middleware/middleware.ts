@@ -16,7 +16,7 @@ export const userMiddleware = (
   const decoded = jwt.verify(authHeader as string, JWT_PASSWORD);
   try {
     if (decoded) {
-      if (typeof decoded === "string") {
+      if (typeof decoded === "string"|| null) {
         res.status(403).json({
           message: "you are not logged in",
         });

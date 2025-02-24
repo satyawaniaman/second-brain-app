@@ -16,7 +16,7 @@ const userMiddleware = (req, res, next) => {
     const decoded = jsonwebtoken_1.default.verify(authHeader, config_1.JWT_PASSWORD);
     try {
         if (decoded) {
-            if (typeof decoded === "string") {
+            if (typeof decoded === "string" || null) {
                 res.status(403).json({
                     message: "you are not logged in",
                 });

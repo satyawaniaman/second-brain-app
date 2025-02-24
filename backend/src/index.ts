@@ -71,12 +71,8 @@ app.post("/api/v1/contents", userMiddleware, async (req, res) => {
       title,
       //@ts-ignore
       userId: req.userId,
-      // Either omit tags field completely if not using tags
-      // or specify it properly like this:
       tags: {
-        create: [], // for creating new tags
-        // or
-        // connect: [] // for connecting existing tags
+        create: [],
       },
     },
   });
@@ -133,7 +129,7 @@ app.delete("/api/v1/contents", userMiddleware, async (req, res) => {
 });
 //@ts-ignore
 app.post("/api/v1/share", userMiddleware, async (req, res) => {
-  const share = req.body.share;
+  const share = req.body.share;// whether the user want to enable sharing or not input is boolean
   try {
     if (share) {
       const existingLink = await client.link.findFirst({
@@ -214,6 +210,6 @@ const server = app.listen(3000, () => {
   console.log("Server listening on port 3000");
 });
 
-server.on("error", (err) => {
+server.on("error", (err: any) => {
   console.error("Error starting server:", err);
 });

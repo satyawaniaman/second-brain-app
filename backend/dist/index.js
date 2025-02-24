@@ -85,12 +85,8 @@ app.post("/api/v1/contents", middleware_1.userMiddleware, (req, res) => __awaite
             title,
             //@ts-ignore
             userId: req.userId,
-            // Either omit tags field completely if not using tags
-            // or specify it properly like this:
             tags: {
-                create: [], // for creating new tags
-                // or
-                // connect: [] // for connecting existing tags
+                create: [],
             },
         },
     });
@@ -149,7 +145,7 @@ app.delete("/api/v1/contents", middleware_1.userMiddleware, (req, res) => __awai
 }));
 //@ts-ignore
 app.post("/api/v1/share", middleware_1.userMiddleware, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const share = req.body.share;
+    const share = req.body.share; // whether the user want to enable sharing or not input is boolean
     try {
         if (share) {
             const existingLink = yield client.link.findFirst({
