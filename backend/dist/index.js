@@ -21,19 +21,40 @@ const middleware_1 = require("./middleware/middleware");
 const cors_1 = __importDefault(require("cors"));
 const config_1 = require("./config/config");
 const utils_1 = require("./utils");
-const client = new client_1.PrismaClient();
+// Initialize PrismaClient with logging enabled
+const client = new client_1.PrismaClient({
+    log: ["query", "info", "warn", "error"],
+});
+// Test database connection
+function testDatabaseConnection() {
+    return __awaiter(this, void 0, void 0, function* () {
+        try {
+            console.log("Testing database connection...");
+            yield client.$connect();
+            console.log("Database connection successful!");
+        }
+        catch (error) {
+            console.error("Database connection error:", error);
+            process.exit(1);
+        }
+    });
+}
+// Invoke the test connection function
+testDatabaseConnection();
 const app = (0, express_1.default)();
 app.use(express_1.default.json());
 app.use((0, cors_1.default)());
+//@ts-ignore
 app.post("/api/v1/signup", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const userSchema = zod_1.z.object({
         username: zod_1.z.string().email(),
         password: zod_1.z.string().min(3).max(20),
     });
-    const username = req.body.username;
-    const password = req.body.password;
-    const hashedPassword = yield bcrypt_1.default.hash(password, 15);
     try {
+        // Validate the input
+        const validatedData = userSchema.parse(req.body);
+        const { username, password } = validatedData;
+        const hashedPassword = yield bcrypt_1.default.hash(password, 15);
         yield client.user.create({
             data: {
                 username,
@@ -45,8 +66,21 @@ app.post("/api/v1/signup", (req, res) => __awaiter(void 0, void 0, void 0, funct
         });
     }
     catch (e) {
-        res.status(411).json({
-            message: "User already registered",
+        if (e instanceof zod_1.z.ZodError) {
+            return res.status(400).json({
+                message: "Invalid input",
+                errors: e.errors,
+            });
+        }
+        // Prisma unique constraint error
+        if (e.code === "P2002") {
+            return res.status(409).json({
+                message: "User already registered",
+            });
+        }
+        console.error("Signup error:", e);
+        res.status(500).json({
+            message: "Error creating user",
         });
     }
 }));
@@ -228,3 +262,4 @@ const server = app.listen(3000, () => {
 server.on("error", (err) => {
     console.error("Error starting server:", err);
 });
+//# sourceMappingURL=index.js.map

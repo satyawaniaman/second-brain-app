@@ -34,3 +34,4 @@ const userMiddleware = (req, res, next) => {
     }
 };
 exports.userMiddleware = userMiddleware;
+//# sourceMappingURL=middleware.js.map

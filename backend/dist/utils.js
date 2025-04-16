@@ -6,3 +6,4 @@ function random(len) {
     const length = options.length;
     return Array.from({ length: len }, () => options[Math.floor(Math.random() * length)]).join("");
 }
+//# sourceMappingURL=utils.js.map

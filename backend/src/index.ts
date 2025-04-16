@@ -1,4 +1,4 @@
-import express from "express";
+import express, { Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
 import { z } from "zod";
@@ -7,32 +7,74 @@ import { userMiddleware } from "./middleware/middleware";
 import cors from "cors";
 import { JWT_PASSWORD } from "./config/config";
 import { random } from "./utils";
-const client = new PrismaClient();
+
+// Initialize PrismaClient with logging enabled
+const client = new PrismaClient({
+  log: ["query", "info", "warn", "error"],
+});
+
+// Test database connection
+async function testDatabaseConnection() {
+  try {
+    console.log("Testing database connection...");
+    await client.$connect();
+    console.log("Database connection successful!");
+  } catch (error) {
+    console.error("Database connection error:", error);
+    process.exit(1);
+  }
+}
+
+// Invoke the test connection function
+testDatabaseConnection();
+
 const app = express();
 app.use(express.json());
 app.use(cors());
 
+//@ts-ignore
 app.post("/api/v1/signup", async (req, res) => {
   const userSchema = z.object({
     username: z.string().email(),
     password: z.string().min(3).max(20),
   });
-  const username = req.body.username;
-  const password = req.body.password;
-  const hashedPassword = await bcrypt.hash(password, 15);
+
   try {
+    // Validate the input
+    const validatedData = userSchema.parse(req.body);
+    const { username, password } = validatedData;
+
+    const hashedPassword = await bcrypt.hash(password, 15);
+
     await client.user.create({
       data: {
         username,
         password: hashedPassword,
       },
     });
+
     res.json({
       message: "user signed up",
     });
-  } catch (e) {
-    res.status(411).json({
-      message: "User already registered",
+  } catch (e: any) {
+    if (e instanceof z.ZodError) {
+      return res.status(400).json({
+        message: "Invalid input",
+        errors: e.errors,
+      });
+    }
+
+    // Prisma unique constraint error
+    if (e.code === "P2002") {
+      return res.status(409).json({
+        message: "User already registered",
+      });
+    }
+
+    console.error("Signup error:", e);
+
+    res.status(500).json({
+      message: "Error creating user",
     });
   }
 });
@@ -129,7 +171,7 @@ app.delete("/api/v1/contents", userMiddleware, async (req, res) => {
 });
 //@ts-ignore
 app.post("/api/v1/share", userMiddleware, async (req, res) => {
-  const share = req.body.share;// whether the user want to enable sharing or not input is boolean
+  const share = req.body.share; // whether the user want to enable sharing or not input is boolean
   try {
     if (share) {
       const existingLink = await client.link.findFirst({
